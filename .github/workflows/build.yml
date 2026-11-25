@@ -1,13 +1,10 @@
 name: Build Android APK
-
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
   export-android:
     runs-on: ubuntu-latest
@@ -15,34 +12,30 @@ jobs:
       image: barichello/godot-ci:4.3
     steps:
       - uses: actions/checkout@v4
-
       - name: Setup Godot
         run: |
-          mkdir -v -p ~/.local/share/godot/export_templates/ ~/.config
+          mkdir -p ~/.local/share/godot ~/.config
           if [ "$HOME" != "/root" ]; then
             cp -r /root/.config/godot ~/.config/ || true
-            mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+            cp -r /root/.local/share/godot/export_templates ~/.local/share/godot/ || true
           fi
-
+          ls ~/.local/share/godot/export_templates
       - name: Import project
         run: godot --headless --verbose --import || true
-
       - name: Export APK
         run: |
-          mkdir -v -p build
+          mkdir -p build
           keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore $PWD/debug.keystore -storepass android -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
           export GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$PWD/debug.keystore
           export GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey
           export GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android
           godot --headless --verbose --export-debug "Android" build/StreetRacer.apk
           ls -la build
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: StreetRacer-apk
           path: build/StreetRacer.apk
-
       - name: Release
         continue-on-error: true
         uses: softprops/action-gh-release@v2
