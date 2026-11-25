@@ -17,6 +17,7 @@ import android.widget.TextView
 class Island : NotificationListenerService() {
     private val handler = Handler(Looper.getMainLooper())
     private var view: TextView? = null
+    private var open = false
     private val tick = object : Runnable {
         override fun run() {
             update()
@@ -66,14 +67,29 @@ class Island : NotificationListenerService() {
             view = it
         }
         val playing = media.playbackState?.state == PlaybackState.STATE_PLAYING
-        v.text = (if (playing) "♫ " else "❚❚ ") + title.take(24)
+        val artist = media.metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: ""
+        v.maxLines = 4
+        v.gravity = Gravity.CENTER
+        v.textSize = if (open) 18f else 14f
+        v.text = if (open) "${title.take(28)}\n${artist.take(28)}\n\n⏮      ${if (playing) "⏸" else "▶"}      ⏭"
+            else "♫  ${title.take(18)}  ıllı"
         v.setTextColor(p.getInt("accent", -1))
         v.background = GradientDrawable().apply {
             setColor(p.getInt("bg", -16777216))
-            cornerRadius = 100f
+            cornerRadius = if (open) 70f else 100f
         }
-        v.setOnClickListener {
-            if (playing) media.transportControls.pause() else media.transportControls.play()
+        // касание: открыть; в плеере левая, средняя и правая часть это кнопки
+        v.setOnTouchListener { t, e ->
+            if (e.action == android.view.MotionEvent.ACTION_UP) {
+                val controls = media.transportControls
+                if (!open) open = true
+                else if (e.y < t.height * 0.55f) open = false
+                else if (e.x < t.width / 3) controls.skipToPrevious()
+                else if (e.x > t.width * 2 / 3) controls.skipToNext()
+                else if (playing) controls.pause() else controls.play()
+                update()
+            }
+            true
         }
     }
 }

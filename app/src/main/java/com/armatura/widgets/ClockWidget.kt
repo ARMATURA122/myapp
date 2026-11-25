@@ -11,6 +11,8 @@ fun clockFormat(code: String): String =
         if (it.isEmpty()) "" else "'" + it.replace("'", "’") + "'"
     }
 
+class AnalogWidget : AppWidgetProvider()
+
 class ClockWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         val p = context.getSharedPreferences("style", Context.MODE_PRIVATE)

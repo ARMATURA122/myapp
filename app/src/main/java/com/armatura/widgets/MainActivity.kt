@@ -73,7 +73,20 @@ class MainActivity : ComponentActivity() {
                             if (manager.isRequestPinAppWidgetSupported)
                                 manager.requestPinAppWidget(widget, null, null)
                         }) { Text("Сохранить виджет") }
-                        Text("Снег", fontSize = 20.sp)
+                        Button(onClick = {
+                            manager.requestPinAppWidget(ComponentName(this@MainActivity, AnalogWidget::class.java), null, null)
+                        }) { Text("Добавить круглые часы") }
+                        listOf("snow" to "Снег на экране", "lock" to "Часы на блокировке").forEach { (key, name) ->
+                            var on by remember { mutableStateOf(p.getBoolean(key, key == "snow")) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(name, Modifier.weight(1f), fontSize = 20.sp)
+                                Switch(on, { on = it; p.edit().putBoolean(key, it).apply() })
+                            }
+                        }
+                        OutlinedButton(onClick = {
+                            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        }) { Text("Включить службу эффектов") }
+                        Text("Снежные обои", fontSize = 20.sp)
                         Button(onClick = {
                             startActivity(Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).putExtra(
                                 WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
