@@ -21,5 +21,6 @@
       </intent-filter>
       <meta-data android:name="android.appwidget.provider" android:resource="@xml/battery_info"/>
     </receiver>
-  </application>
+  <service android:name="com.armatura.widgets.SnowWallpaper" android:label="Snow" android:exported="true" android:permission="android.permission.BIND_WALLPAPER"><intent-filter><action android:name="android.service.wallpaper.WallpaperService" /></intent-filter><meta-data android:name="android.service.wallpaper" android:resource="@xml/snow_wallpaper" /></service>
+</application>
 </manifest>
