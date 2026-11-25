@@ -7,7 +7,7 @@ android {
     namespace = "com.armatura.widgets"
     compileSdk = 35
     defaultConfig {
-        applicationId = "com.armatura.widgets"
+        applicationId = "com.armatura.widgets2"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
