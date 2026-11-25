@@ -2,17 +2,22 @@ package com.armatura.iconstyle
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.role.RoleManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.LauncherActivityInfo
+import android.content.pm.LauncherApps
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.UserHandle
 import android.provider.Settings
 import android.text.TextUtils
 import android.view.Gravity
@@ -29,7 +34,13 @@ import java.io.FileOutputStream
 
 class MainActivity : Activity() {
 
-    private class AppEntry(val label: String, val pkg: String, val cls: String, val icon: Bitmap?)
+    private class AppEntry(
+        val label: String,
+        val pkg: String,
+        val component: ComponentName,
+        val user: UserHandle,
+        val icon: Bitmap?
+    )
 
     private val items = ArrayList<AppEntry>()
     private lateinit var grid: GridView
@@ -72,6 +83,18 @@ class MainActivity : Activity() {
         f.addDataScheme("package")
         registerReceiver(pkgReceiver, f)
         reload()
+
+        // один раз предлагаем сделать главным экраном
+        val prefs = getSharedPreferences("p", Context.MODE_PRIVATE)
+        if (!isDefaultHome() && !prefs.getBoolean("asked", false)) {
+            prefs.edit().putBoolean("asked", true).apply()
+            AlertDialog.Builder(this)
+                .setTitle("Главный экран")
+                .setMessage("Чтобы стилизованные иконки были на телефоне, сделай IconStyle главным экраном.")
+                .setPositiveButton("Сделать") { _, _ -> askDefault() }
+                .setNegativeButton("Позже", null)
+                .show()
+        }
     }
 
     override fun onDestroy() {
@@ -89,16 +112,38 @@ class MainActivity : Activity() {
         // лаунчер: назад ничего не делает
     }
 
+    private fun isDefaultHome(): Boolean {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val rm = getSystemService(Context.ROLE_SERVICE) as RoleManager
+            return rm.isRoleHeld(RoleManager.ROLE_HOME)
+        }
+        return false
+    }
+
+    private fun askDefault() {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val rm = getSystemService(Context.ROLE_SERVICE) as RoleManager
+            if (rm.isRoleAvailable(RoleManager.ROLE_HOME) && !rm.isRoleHeld(RoleManager.ROLE_HOME)) {
+                startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_HOME), REQ_ROLE)
+                return
+            }
+        }
+        startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
+    }
+
     private fun reload() {
         Thread {
-            val pm = packageManager
-            val q = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            val list = pm.queryIntentActivities(q, 0)
-                .filter { it.activityInfo.packageName != packageName }
-                .sortedBy { it.loadLabel(pm).toString().lowercase() }
+            val la = getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+            val acts = ArrayList<LauncherActivityInfo>()
+            for (u in la.profiles) {
+                acts.addAll(la.getActivityList(null, u))
+            }
+            val list = acts
+                .filter { it.applicationInfo.packageName != packageName }
+                .sortedBy { it.label.toString().lowercase() }
             val res = ArrayList<AppEntry>()
-            for (ri in list) {
-                val pkg = ri.activityInfo.packageName
+            for (ai in list) {
+                val pkg = ai.applicationInfo.packageName
                 var bmp: Bitmap? = null
                 val cf = customFile(pkg)
                 if (cf.exists()) {
@@ -106,12 +151,12 @@ class MainActivity : Activity() {
                 }
                 if (bmp == null) {
                     bmp = try {
-                        IconStyler.style(ri.loadIcon(pm), ICON_PX)
+                        IconStyler.style(ai.getIcon(0), ICON_PX)
                     } catch (e: Exception) {
                         null
                     }
                 }
-                res.add(AppEntry(ri.loadLabel(pm).toString(), pkg, ri.activityInfo.name, bmp))
+                res.add(AppEntry(ai.label.toString(), pkg, ai.componentName, ai.user, bmp))
             }
             runOnUiThread {
                 items.clear()
@@ -122,19 +167,16 @@ class MainActivity : Activity() {
     }
 
     private fun launch(e: AppEntry) {
-        val i = Intent(Intent.ACTION_MAIN)
-        i.addCategory(Intent.CATEGORY_LAUNCHER)
-        i.component = ComponentName(e.pkg, e.cls)
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         try {
-            startActivity(i)
+            val la = getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+            la.startMainActivity(e.component, e.user, null, null)
         } catch (ex: Exception) {
             Toast.makeText(this, "Не удалось открыть", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun showMenu(e: AppEntry) {
-        val opts = arrayOf("Сменить иконку (из галереи)", "Сбросить иконку", "О приложении", "Сделать лаунчером по умолчанию")
+        val opts = arrayOf("Сменить иконку (из галереи)", "Сбросить иконку", "О приложении", "Сделать главным экраном")
         AlertDialog.Builder(this)
             .setTitle(e.label)
             .setItems(opts) { _, which ->
@@ -153,7 +195,7 @@ class MainActivity : Activity() {
                         i.data = Uri.parse("package:" + e.pkg)
                         startActivity(i)
                     }
-                    3 -> startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
+                    3 -> askDefault()
                 }
             }
             .show()
@@ -215,5 +257,6 @@ class MainActivity : Activity() {
     companion object {
         private const val ICON_PX = 192
         private const val REQ_PICK = 1
+        private const val REQ_ROLE = 2
     }
 }
