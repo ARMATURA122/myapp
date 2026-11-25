@@ -1,3 +1,4 @@
-.godot/
+.gradle/
 build/
-*.keystore
+app/build/
+local.properties

@@ -60,7 +60,7 @@ class SnowWallpaper : WallpaperService() {
             try {
                 c = surfaceHolder.lockCanvas()
                 if (c != null && w > 0) {
-                    c.drawColor(Color.rgb(18, 30, 58))
+                    c.drawColor(getSharedPreferences("style", MODE_PRIVATE).getInt("bg", Color.rgb(18, 30, 58)))
                     val col = w / pile.size
                     for (f in flakes) {
                         f.y += f.r * 0.5f

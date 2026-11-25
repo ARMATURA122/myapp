@@ -1,26 +1,24 @@
-<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <application android:label="Мои виджеты" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
-    <activity android:name=".MainActivity" android:exported="true">
-      <intent-filter>
-        <action android:name="android.intent.action.MAIN"/>
-        <category android:name="android.intent.category.LAUNCHER"/>
-      </intent-filter>
-    </activity>
-    <receiver android:name=".ClockWidget" android:exported="true">
-      <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter>
-      <meta-data android:name="android.appwidget.provider" android:resource="@xml/clock_info"/>
-    </receiver>
-    <receiver android:name=".BatteryWidget" android:exported="true">
-      <intent-filter>
-        <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
-        <action android:name="android.intent.action.ACTION_POWER_CONNECTED"/>
-        <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED"/>
-        <action android:name="android.intent.action.BATTERY_LOW"/>
-        <action android:name="android.intent.action.BATTERY_OKAY"/>
-      </intent-filter>
-      <meta-data android:name="android.appwidget.provider" android:resource="@xml/battery_info"/>
-    </receiver>
-  <service android:name="com.armatura.widgets.SnowWallpaper" android:label="Snow" android:exported="true" android:permission="android.permission.BIND_WALLPAPER"><intent-filter><action android:name="android.service.wallpaper.WallpaperService" /></intent-filter><meta-data android:name="android.service.wallpaper" android:resource="@xml/snow_wallpaper" /></service>
-</application>
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <application android:label="Widgets" android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <receiver android:name=".ClockWidget" android:exported="false">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/clock_info" />
+        </receiver>
+        <service android:name=".SnowWallpaper" android:label="Snow" android:exported="true"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter><action android:name="android.service.wallpaper.WallpaperService" /></intent-filter>
+            <meta-data android:name="android.service.wallpaper" android:resource="@xml/snow_wallpaper" />
+        </service>
+        <service android:name=".Island" android:label="Островок" android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
+        </service>
+    </application>
 </manifest>

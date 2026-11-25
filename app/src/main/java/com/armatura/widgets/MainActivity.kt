@@ -1,100 +1,98 @@
 package com.armatura.widgets
 
-import android.app.Activity
+import android.app.WallpaperManager
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
-import android.view.Gravity
-import android.view.View
-import android.widget.*
+import android.provider.Settings
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
-class MainActivity : Activity() {
-    override fun onCreate(b: Bundle?) {
-        super.onCreate(b)
-        val p = prefs(this)
-        val dp = resources.displayMetrics.density
-        fun d(x: Int) = (x * dp).toInt()
-        val root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
-        root.setPadding(d(16), d(28), d(16), d(24))
-        root.setBackgroundColor(0xFF0B0B14.toInt())
-        fun tv(t: String): TextView {
-            val v = TextView(this)
-            v.text = t; v.setTextColor(Color.WHITE); v.textSize = 16f
-            v.setPadding(0, d(16), 0, d(6))
-            return v
-        }
-        val pv = TextView(this)
-        pv.text = "12:34"; pv.gravity = Gravity.CENTER
-        pv.setBackgroundColor(0xFF2A2A40.toInt())
-        fun refresh() {
-            pv.typeface = Typeface.create(FONTS[p.getInt("font", 0)], Typeface.NORMAL)
-            pv.setTextColor(p.getInt("color", COLORS[0]))
-            pv.textSize = p.getInt("size", 60).toFloat()
-            updateAll(this)
-        }
-        root.addView(pv)
-        root.addView(tv("Шрифт"))
-        val fr = LinearLayout(this)
-        NAMES.forEachIndexed { i, n ->
-            val bt = Button(this)
-            bt.text = n
-            bt.typeface = Typeface.create(FONTS[i], Typeface.NORMAL)
-            bt.setOnClickListener { p.edit().putInt("font", i).apply(); refresh() }
-            fr.addView(bt)
-        }
-        val fs = HorizontalScrollView(this)
-        fs.addView(fr)
-        root.addView(fs)
-        root.addView(tv("Цвет"))
-        val cr = LinearLayout(this)
-        COLORS.forEach { c ->
-            val v = View(this)
-            val g = GradientDrawable()
-            g.shape = GradientDrawable.OVAL
-            g.setColor(c)
-            g.setStroke(d(2), Color.GRAY)
-            v.background = g
-            val lp = LinearLayout.LayoutParams(d(44), d(44))
-            lp.setMargins(0, 0, d(10), 0)
-            v.layoutParams = lp
-            v.setOnClickListener { p.edit().putInt("color", c).apply(); refresh() }
-            cr.addView(v)
-        }
-        val cs = HorizontalScrollView(this)
-        cs.addView(cr)
-        root.addView(cs)
-        root.addView(tv("Размер часов"))
-        val sb = SeekBar(this)
-        sb.max = 60
-        sb.progress = p.getInt("size", 60) - 30
-        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar?, v: Int, u: Boolean) {
-                p.edit().putInt("size", 30 + v).apply(); refresh()
+private class Look(val name: String, val bg: Long, val accent: Long)
+private val looks = listOf(
+    Look("Зима", 0xFF121E3A, 0xFFFFFFFF), Look("Мята", 0xFF073B3A, 0xFF7CF5C4),
+    Look("Закат", 0xFF3D1635, 0xFFFFB26B), Look("Уголь", 0xFF000000, 0xFFE0E0E0))
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val p = getSharedPreferences("style", MODE_PRIVATE)
+        val manager = AppWidgetManager.getInstance(this)
+        val widget = ComponentName(this, ClockWidget::class.java)
+        fun refresh() = ClockWidget().onUpdate(this, manager, manager.getAppWidgetIds(widget))
+        setContent {
+            var bg by remember { mutableIntStateOf(p.getInt("bg", looks[0].bg.toInt())) }
+            var accent by remember { mutableIntStateOf(p.getInt("accent", -1)) }
+            var code by remember { mutableStateOf(p.getString("code", "{time}")!!) }
+            var island by remember { mutableStateOf(p.getBoolean("island", false)) }
+            MaterialTheme(colorScheme = darkColorScheme(primary = Color(accent))) {
+                Surface(Modifier.fillMaxSize()) {
+                    Column(Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Box(Modifier.fillMaxWidth().height(170.dp)
+                            .background(Color(bg), RoundedCornerShape(28.dp)), Alignment.Center) {
+                            val now = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+                            Text(code.replace("{time}", now), color = Color(accent), fontSize = 40.sp)
+                        }
+                        Text("Темы", fontSize = 20.sp)
+                        looks.chunked(2).forEach { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                row.forEach { l ->
+                                    Button(onClick = {
+                                        bg = l.bg.toInt()
+                                        accent = l.accent.toInt()
+                                        p.edit().putInt("bg", bg).putInt("accent", accent).apply()
+                                        refresh()
+                                    }, modifier = Modifier.weight(1f).height(64.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(l.bg), contentColor = Color(l.accent))
+                                    ) { Text(l.name) }
+                                }
+                            }
+                        }
+                        Text("Свой виджет", fontSize = 20.sp)
+                        OutlinedTextField(code, { code = it }, Modifier.fillMaxWidth(),
+                            label = { Text("Текст, {time} это часы") })
+                        Button(onClick = {
+                            p.edit().putString("code", code).apply()
+                            refresh()
+                            if (manager.isRequestPinAppWidgetSupported)
+                                manager.requestPinAppWidget(widget, null, null)
+                        }) { Text("Сохранить виджет") }
+                        Text("Снег", fontSize = 20.sp)
+                        Button(onClick = {
+                            startActivity(Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).putExtra(
+                                WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
+                                ComponentName(this@MainActivity, SnowWallpaper::class.java)))
+                        }) { Text("Поставить обои со снегом") }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Островок с музыкой", Modifier.weight(1f), fontSize = 20.sp)
+                            Switch(island, { island = it; p.edit().putBoolean("island", it).apply() })
+                        }
+                        OutlinedButton(onClick = {
+                            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:$packageName")))
+                        }) { Text("1. Разрешить поверх окон") }
+                        OutlinedButton(onClick = {
+                            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        }) { Text("2. Доступ к уведомлениям") }
+                    }
+                }
             }
-            override fun onStartTrackingTouch(s: SeekBar?) {}
-            override fun onStopTrackingTouch(s: SeekBar?) {}
-        })
-        root.addView(sb)
-        fun pin(cls: Class<*>) {
-            val m = AppWidgetManager.getInstance(this)
-            if (m.isRequestPinAppWidgetSupported) m.requestPinAppWidget(ComponentName(this, cls), null, null)
-            else Toast.makeText(this, "Долгий тап на рабочем столе, Виджеты", Toast.LENGTH_LONG).show()
         }
-        val b1 = Button(this)
-        b1.text = "Добавить часы на экран"
-        b1.setOnClickListener { pin(ClockWidget::class.java) }
-        val b2 = Button(this)
-        b2.text = "Добавить батарею на экран"
-        b2.setOnClickListener { pin(BatteryWidget::class.java) }
-        root.addView(b1)
-        root.addView(b2)
-        val sv = ScrollView(this)
-        sv.addView(root)
-        setContentView(sv)
-        refresh()
     }
 }
