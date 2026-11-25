@@ -1,35 +1,32 @@
-name: android
+name: build
 on: [push, workflow_dispatch]
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: 20
+          python-version: "3.10"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - name: Prepare web
+      - name: Install deps
         run: |
-          mkdir -p www
-          cp game.html www/index.html
-          curl -fL -o www/three.min.js https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js
-          sed -i 's#https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js#three.min.js#' www/index.html
-      - name: Capacitor
-        run: |
-          npm init -y
-          npm i @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
-          npx cap init NeonDrift com.armatura.neondrift --web-dir www
-          npx cap add android
-          npx cap sync android
-      - name: Build APK
-        run: |
-          sed -i 's/<activity /<activity android:screenOrientation="landscape" /' android/app/src/main/AndroidManifest.xml
-          cd android && chmod +x gradlew && ./gradlew assembleDebug
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev build-essential
+          pip install --upgrade pip
+          pip install cython==0.29.36 buildozer
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            .buildozer
+          key: buildozer-${{ hashFiles('buildozer.spec') }}
+      - name: Build
+        run: buildozer -v android debug
       - uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: bin/*.apk
