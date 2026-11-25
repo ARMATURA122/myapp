@@ -9,6 +9,9 @@ requirements = python3,kivy
 orientation = portrait
 android.archs = arm64-v8a
 android.api = 33
+android.ndk = 25b
+android.ndk_api = 21
+android.minapi = 21
 android.accept_sdk_license = True
 
 [buildozer]
