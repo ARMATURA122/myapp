@@ -1,683 +1,442 @@
 extends Node3D
+# Street Racer: Open World — открытый город, гонки нужно искать
 
-const CarScript = preload("res://car.gd")
-const R := 160.0
-const ROAD_W := 24.0
-const LAPS := 3
-const GARAGE := Vector3(900, 0, 900)
+const City = preload("res://city.gd")
+const CarVisual = preload("res://car_visual.gd")
+const PlayerCar = preload("res://car.gd")
+const Hud = preload("res://hud.gd")
 
-var ui: CanvasLayer
+const SPAWN_CELL := Vector2i(4, 6)
+const RACE_COUNT := 6
+const SAVE_PATH := "user://save.json"
+
+enum RS { IDLE, COUNTDOWN, RUNNING }
+
+var rng := RandomNumberGenerator.new()
+var fx_rng := RandomNumberGenerator.new()
+var city
+var car
+var hud
 var cam: Camera3D
-var world: Node3D
-var menu: Control
-var hud: Control
-var state := "menu"
-var view_idx := 0
-var preview = null
-var player = null
-var cars_all: Array = []
-var progress: Dictionary = {}
-var finished: Array = []
-var countdown := 0.0
-var go_hide := 0.0
+var cam_yaw := 0.0
+
+var races: Array = []
+var state: int = RS.IDLE
+var cur_race := -1
+var route: Array = []
+var next_cp := 1
 var race_time := 0.0
-var touches: Dictionary = {}
-var held: Dictionary = {}
-var btn_rects: Dictionary = {}
-var btn_nodes: Dictionary = {}
-var info_label: Label
-var speed_label: Label
-var drift_label: Label
-var big_label: Label
-var nitro_bar: ProgressBar
-var snap_cam := true
+var countdown := 0.0
+var rival: Node3D = null
+var rival_v = null
+var rival_idx := 1
+var rival_speed := 36.0
+var rival_cur := 0.0
+var beacon: Node3D
+var money := 0
+
 
 func _ready() -> void:
-	get_viewport().msaa_3d = Viewport.MSAA_2X
-	_build_environment()
-	ui = CanvasLayer.new()
-	add_child(ui)
-	cam = Camera3D.new()
-	cam.near = 0.2
-	cam.far = 700.0
-	add_child(cam)
-	cam.make_current()
-	view_idx = Game.selected
-	show_menu()
+	process_physics_priority = 100
+	rng.seed = 7741
+	fx_rng.randomize()
+	_setup_environment()
+	city = City.new()
+	add_child(city)
+	city.build(rng)
+	_spawn_car()
+	hud = Hud.new()
+	add_child(hud)
+	_setup_camera()
+	_setup_races()
+	beacon = _make_beacon(Color(0.2, 0.8, 1.0), 6.0)
+	beacon.visible = false
+	add_child(beacon)
+	_load_game()
+	hud.show_msg("Исследуй город!\nИщи светящиеся кольца — это начало гонок", 6.0)
 
-# ---------------------------------------------------------------- окружение
-func _build_environment() -> void:
-	var we := WorldEnvironment.new()
-	var env := Environment.new()
+
+# ---------------------------------------------------------------- мир
+
+func _setup_environment() -> void:
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.20, 0.45, 0.85)
+	sky_mat.sky_horizon_color = Color(0.72, 0.84, 0.95)
+	sky_mat.sky_curve = 0.18
+	sky_mat.ground_horizon_color = Color(0.72, 0.84, 0.95)
+	sky_mat.ground_bottom_color = Color(0.35, 0.38, 0.42)
+	sky_mat.sun_angle_max = 40.0
+	sky_mat.sun_curve = 0.12
 	var sky := Sky.new()
-	var psm := ProceduralSkyMaterial.new()
-	psm.sky_top_color = Color(0.04, 0.07, 0.25)
-	psm.sky_horizon_color = Color(0.95, 0.45, 0.25)
-	psm.ground_horizon_color = Color(0.5, 0.3, 0.25)
-	psm.ground_bottom_color = Color(0.04, 0.04, 0.07)
-	sky.sky_material = psm
+	sky.sky_material = sky_mat
+	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 0.9
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.glow_enabled = true
-	env.glow_intensity = 0.8
-	env.glow_bloom = 0.05
-	env.glow_hdr_threshold = 1.0
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.8, 0.5, 0.4)
-	env.fog_density = 0.0025
+	env.fog_light_color = Color(0.74, 0.83, 0.93)
+	env.fog_density = 0.0008
+	env.fog_sky_affect = 0.25
 	env.adjustment_enabled = true
-	env.adjustment_saturation = 1.2
-	env.adjustment_contrast = 1.1
+	env.adjustment_saturation = 1.15
+	env.adjustment_contrast = 1.05
+	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-18, -60, 0)
-	sun.light_color = Color(1.0, 0.7, 0.5)
-	sun.light_energy = 1.6
+	sun.rotation_degrees = Vector3(-35.0, 160.0, 0.0)
+	sun.light_color = Color(1.0, 0.93, 0.8)
+	sun.light_energy = 1.35
 	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 120.0
+	sun.directional_shadow_max_distance = 180.0
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	add_child(sun)
 
-# ---------------------------------------------------------------- помощники
-func _emit(c: Color, energy := 2.0) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.emission_enabled = true
-	m.emission = c
-	m.emission_energy_multiplier = energy
-	return m
 
-func _plain(c: Color, rough := 0.6) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.roughness = rough
-	return m
+func _spawn_car() -> void:
+	car = PlayerCar.new()
+	add_child(car)
+	car.place(_spawn_pos(), 0.0)
 
-func _noise_tex(c0: Color, c1: Color, freq: float) -> NoiseTexture2D:
-	var n := FastNoiseLite.new()
-	n.frequency = freq
-	var t := NoiseTexture2D.new()
-	t.noise = n
-	t.width = 256
-	t.height = 256
-	t.seamless = true
-	var g := Gradient.new()
-	g.set_color(0, c0)
-	g.set_color(1, c1)
-	t.color_ramp = g
-	return t
 
-func _window_tex() -> ImageTexture:
-	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 3
-	for cy in 8:
-		for cx in 8:
-			var lit := rng.randf() < 0.55
-			var warm := rng.randf() < 0.7
-			var c := Color(0.02, 0.03, 0.05)
-			if lit:
-				c = Color(1.0, 0.85, 0.5) if warm else Color(0.5, 0.9, 1.0)
-			for y in 8:
-				for x in 8:
-					var inside := x >= 2 and x <= 5 and y >= 2 and y <= 5
-					img.set_pixel(cx * 8 + x, cy * 8 + y, c if inside else Color(0.05, 0.06, 0.09))
-	img.generate_mipmaps()
-	return ImageTexture.create_from_image(img)
+func _spawn_pos() -> Vector3:
+	return City.cell_to_pos(SPAWN_CELL.x, SPAWN_CELL.y) + Vector3(4.5, 0.1, 0.0)
 
-func _add_box(parent: Node, pos: Vector3, size: Vector3, m: Material, rot_y := 0.0, collide := true) -> void:
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	mi.mesh = bm
-	mi.material_override = m
-	mi.position = pos
-	mi.rotation.y = rot_y
-	parent.add_child(mi)
-	if collide:
-		var cs := CollisionShape3D.new()
-		var sh := BoxShape3D.new()
-		sh.size = size
-		cs.shape = sh
-		cs.position = pos
-		cs.rotation.y = rot_y
-		parent.add_child(cs)
 
-func _tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
-	if (b - a).cross(c - a).y > 0.0:
-		var t := b
-		b = c
-		c = t
-	for p in [a, b, c]:
-		st.set_normal(Vector3.UP)
-		st.add_vertex(p)
+func _setup_camera() -> void:
+	cam = Camera3D.new()
+	cam.near = 0.2
+	cam.far = 900.0
+	cam.fov = 72.0
+	add_child(cam)
+	cam.current = true
+	cam_yaw = car.rotation.y
+	_update_camera(0.016, true)
 
-func _ring_mesh(r0: float, r1: float, y: float, n: int, dashed: bool) -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for i in n:
-		if dashed and i % 2 == 1:
-			continue
-		var a0 := TAU * i / n
-		var a1 := TAU * (i + 1) / n
-		var i0 := Vector3(cos(a0) * r0, y, sin(a0) * r0)
-		var o0 := Vector3(cos(a0) * r1, y, sin(a0) * r1)
-		var i1 := Vector3(cos(a1) * r0, y, sin(a1) * r0)
-		var o1 := Vector3(cos(a1) * r1, y, sin(a1) * r1)
-		_tri(st, i0, o0, i1)
-		_tri(st, o0, o1, i1)
-	return st.commit()
 
-func _add_mesh(mesh: Mesh, m: Material) -> void:
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = m
-	world.add_child(mi)
+func _update_camera(delta: float, snap: bool = false) -> void:
+	var k: float = 1.0 if snap else 1.0 - exp(-4.5 * delta)
+	cam_yaw = lerp_angle(cam_yaw, car.rotation.y, k)
+	var spd: float = absf(car.speed_fwd)
+	var dist: float = 6.4 + spd * 0.035
+	var behind := Vector3(sin(cam_yaw), 0.0, cos(cam_yaw))
+	var cpos: Vector3 = car.position
+	cam.position = cpos + behind * dist + Vector3(0.0, 2.3 + spd * 0.01, 0.0)
+	cam.look_at(cpos + Vector3(0.0, 1.2, 0.0), Vector3.UP)
+	cam.fov = lerpf(cam.fov, 70.0 + clampf(spd, 0.0, 70.0) * 0.28, 1.0 - exp(-3.0 * delta))
 
-func _lbl(t: String, size := 24, col := Color.WHITE) -> Label:
-	var l := Label.new()
-	l.text = t
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", col)
-	l.add_theme_color_override("font_outline_color", Color.BLACK)
-	l.add_theme_constant_override("outline_size", 6)
-	return l
 
-func _btn(t: String, size := 26, min_size := Vector2(300, 64)) -> Button:
-	var b := Button.new()
-	b.text = t
-	b.custom_minimum_size = min_size
-	b.add_theme_font_size_override("font_size", size)
-	return b
+# ---------------------------------------------------------------- гонки
 
-func _clear_world() -> void:
-	if world:
-		world.queue_free()
-		world = null
-	preview = null
-	player = null
-	cars_all.clear()
-	progress.clear()
-	finished.clear()
-
-# ---------------------------------------------------------------- гараж
-func show_menu() -> void:
-	state = "menu"
-	if hud:
-		hud.queue_free()
-		hud = null
-	touches.clear()
-	held.clear()
-	_clear_world()
-	_build_garage()
-	_spawn_preview()
-	_build_menu()
-
-func _build_garage() -> void:
-	world = Node3D.new()
-	add_child(world)
-	var fm := StandardMaterial3D.new()
-	fm.albedo_color = Color(0.05, 0.05, 0.07)
-	fm.metallic = 0.8
-	fm.roughness = 0.18
-	var fl := MeshInstance3D.new()
-	var pm := PlaneMesh.new()
-	pm.size = Vector2(80, 80)
-	fl.mesh = pm
-	fl.material_override = fm
-	fl.position = GARAGE
-	world.add_child(fl)
+func _make_beacon(col: Color, radius: float) -> Node3D:
+	var n := Node3D.new()
+	var ring_mat := StandardMaterial3D.new()
+	ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ring_mat.albedo_color = col
 	var ring := MeshInstance3D.new()
 	var tm := TorusMesh.new()
-	tm.inner_radius = 3.6
-	tm.outer_radius = 3.8
+	tm.inner_radius = radius - 0.45
+	tm.outer_radius = radius + 0.45
+	tm.rings = 40
+	tm.ring_segments = 8
 	ring.mesh = tm
-	ring.material_override = _emit(Color(0.1, 0.8, 1.0), 3.0)
-	ring.position = GARAGE + Vector3(0, 0.05, 0)
-	world.add_child(ring)
-	var ol := OmniLight3D.new()
-	ol.position = GARAGE + Vector3(0, 5, 0)
-	ol.omni_range = 20.0
-	ol.light_energy = 3.0
-	ol.light_color = Color(0.7, 0.8, 1.0)
-	world.add_child(ol)
+	ring.material_override = ring_mat
+	ring.position = Vector3(0, 0.6, 0)
+	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(ring)
 
-func _spawn_preview() -> void:
-	if preview:
-		preview.queue_free()
-	preview = CarScript.new()
-	preview.freeze = true
-	preview.setup(view_idx, Game.levels(view_idx), true)
-	world.add_child(preview)
-	preview.position = GARAGE + Vector3(0, 0.6, 0)
+	var beam_mat := StandardMaterial3D.new()
+	beam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	beam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	beam_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	beam_mat.albedo_color = Color(col.r, col.g, col.b, 0.16)
+	var beam := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = radius
+	cm.bottom_radius = radius
+	cm.height = 30.0
+	cm.radial_segments = 24
+	cm.cap_top = false
+	cm.cap_bottom = false
+	beam.mesh = cm
+	beam.material_override = beam_mat
+	beam.position = Vector3(0, 15.0, 0)
+	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(beam)
+	n.set_meta("ring_mat", ring_mat)
+	n.set_meta("beam_mat", beam_mat)
+	return n
 
-func _build_menu() -> void:
-	if menu:
-		menu.queue_free()
-	menu = Control.new()
-	menu.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	ui.add_child(menu)
-	var vs := get_viewport().get_visible_rect().size
-	var d: Dictionary = Game.cars[view_idx]
-	var owned := view_idx in Game.owned
-	var panel := PanelContainer.new()
-	panel.position = Vector2(20, 20)
-	menu.add_child(panel)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 8)
-	panel.add_child(v)
-	v.add_child(_lbl("Деньги: $%d" % Game.money, 30, Color(0.5, 1, 0.5)))
-	v.add_child(_lbl(d["name"], 34))
-	v.add_child(_lbl("Мощность %d   Макс. %d км/ч   Сцепление %.1f" % [int(d["power"]), int(float(d["top"]) * 3.6), float(d["grip"])], 20))
-	if owned:
-		if Game.selected == view_idx:
-			v.add_child(_lbl("Выбрана", 24, Color(1, 0.85, 0.3)))
-		else:
-			var sb := _btn("Выбрать")
-			sb.pressed.connect(_on_select)
-			v.add_child(sb)
-		for k in Game.UPGRADES:
-			var lvl: int = Game.levels(view_idx)[k]
-			var maxed := lvl >= Game.MAX_LEVEL
-			var cost := Game.upgrade_cost(view_idx, k)
-			var price_txt := "МАКС" if maxed else "$" + str(cost)
-			var ub := _btn("%s  %d/%d  %s" % [Game.UPGRADES[k], lvl, Game.MAX_LEVEL, price_txt], 22)
-			ub.disabled = maxed or Game.money < cost
-			ub.pressed.connect(_on_upgrade.bind(k))
-			v.add_child(ub)
-	else:
-		var bb := _btn("Купить  $%d" % int(d["price"]))
-		bb.disabled = Game.money < int(d["price"])
-		bb.pressed.connect(_on_buy)
-		v.add_child(bb)
-	var prev := _btn("<", 34, Vector2(110, 80))
-	prev.position = Vector2(vs.x * 0.5 - 140, vs.y - 110)
-	prev.pressed.connect(_on_prev)
-	menu.add_child(prev)
-	var nxt := _btn(">", 34, Vector2(110, 80))
-	nxt.position = Vector2(vs.x * 0.5 + 30, vs.y - 110)
-	nxt.pressed.connect(_on_next)
-	menu.add_child(nxt)
-	var race := _btn("ГОНКА", 40, Vector2(300, 100))
-	race.position = Vector2(vs.x - 330, vs.y - 130)
-	race.disabled = not owned
-	race.pressed.connect(_on_race)
-	menu.add_child(race)
 
-func _on_select() -> void:
-	Game.selected = view_idx
-	Game.save_game()
-	_build_menu()
+func _set_beacon_color(n: Node3D, col: Color) -> void:
+	var rm: StandardMaterial3D = n.get_meta("ring_mat")
+	var bm: StandardMaterial3D = n.get_meta("beam_mat")
+	rm.albedo_color = col
+	bm.albedo_color = Color(col.r, col.g, col.b, 0.16)
 
-func _on_upgrade(kind: String) -> void:
-	Game.buy_upgrade(view_idx, kind)
-	_build_menu()
 
-func _on_buy() -> void:
-	Game.buy_car(view_idx)
-	_build_menu()
+func _cell_dist(a: Vector2i, b: Vector2i) -> int:
+	return maxi(absi(a.x - b.x), absi(a.y - b.y))
 
-func _on_prev() -> void:
-	view_idx = (view_idx - 1 + Game.cars.size()) % Game.cars.size()
-	_spawn_preview()
-	_build_menu()
 
-func _on_next() -> void:
-	view_idx = (view_idx + 1) % Game.cars.size()
-	_spawn_preview()
-	_build_menu()
+func _setup_races() -> void:
+	var chosen: Array[Vector2i] = []
+	var tries := 0
+	while chosen.size() < RACE_COUNT and tries < 1000:
+		tries += 1
+		var c := Vector2i(rng.randi_range(0, City.GRID - 1), rng.randi_range(0, City.GRID - 1))
+		if _cell_dist(c, SPAWN_CELL) < 3:
+			continue
+		var ok := true
+		for o in chosen:
+			if _cell_dist(c, o) < 3:
+				ok = false
+				break
+		if ok:
+			chosen.append(c)
+	for c in chosen:
+		var pos: Vector3 = City.cell_to_pos(c.x, c.y)
+		var n := _make_beacon(Color(1.0, 0.8, 0.1), 6.5)
+		n.position = pos
+		add_child(n)
+		races.append({
+			"pos": pos, "found": false, "done": false, "armed": true,
+			"node": n, "route": _build_route(c)})
 
-func _on_race() -> void:
-	Game.selected = view_idx
-	Game.save_game()
-	_start_race()
 
-# ---------------------------------------------------------------- трасса
-func _build_track() -> void:
-	world = Node3D.new()
-	add_child(world)
-	var asphalt := StandardMaterial3D.new()
-	asphalt.albedo_texture = _noise_tex(Color(0.10, 0.10, 0.11), Color(0.24, 0.24, 0.26), 0.08)
-	asphalt.uv1_triplanar = true
-	asphalt.uv1_world_triplanar = true
-	asphalt.uv1_scale = Vector3.ONE * 0.06
-	asphalt.roughness = 0.4
-	var grass := StandardMaterial3D.new()
-	grass.albedo_texture = _noise_tex(Color(0.06, 0.10, 0.05), Color(0.16, 0.22, 0.10), 0.05)
-	grass.uv1_triplanar = true
-	grass.uv1_world_triplanar = true
-	grass.uv1_scale = Vector3.ONE * 0.04
-	grass.roughness = 1.0
-	var line_m := _emit(Color(1, 1, 1), 0.6)
+func _build_route(start: Vector2i) -> Array:
+	var cells: Array[Vector2i] = [start]
+	var cur := start
+	var horiz: bool = rng.randf() < 0.5
+	var legs := 0
+	var guard := 0
+	while legs < 5 and guard < 200:
+		guard += 1
+		var n: int = rng.randi_range(2, 4)
+		var sgn: int = 1 if rng.randf() < 0.5 else -1
+		var dir := Vector2i(sgn, 0) if horiz else Vector2i(0, sgn)
+		var nxt: Vector2i = cur + dir * n
+		if not _cell_ok(nxt):
+			nxt = cur - dir * n
+			if not _cell_ok(nxt):
+				continue
+		cells.append(nxt)
+		cur = nxt
+		legs += 1
+		horiz = not horiz
+	var pts: Array = []
+	for c in cells:
+		pts.append(City.cell_to_pos(c.x, c.y))
+	return pts
 
-	var ground := StaticBody3D.new()
-	world.add_child(ground)
-	_add_box(ground, Vector3(0, -0.5, 0), Vector3(1600, 1, 1600), grass)
 
-	_add_mesh(_ring_mesh(R - ROAD_W / 2.0, R + ROAD_W / 2.0, 0.02, 128, false), asphalt)
-	_add_mesh(_ring_mesh(R - 0.2, R + 0.2, 0.04, 96, true), line_m)
-	_add_mesh(_ring_mesh(R - ROAD_W / 2.0 + 0.4, R - ROAD_W / 2.0 + 0.9, 0.04, 128, false), line_m)
-	_add_mesh(_ring_mesh(R + ROAD_W / 2.0 - 0.9, R + ROAD_W / 2.0 - 0.4, 0.04, 128, false), line_m)
+func _cell_ok(c: Vector2i) -> bool:
+	return c.x >= 0 and c.y >= 0 and c.x < City.GRID and c.y < City.GRID
 
-	# отбойники
-	var wall := StaticBody3D.new()
-	world.add_child(wall)
-	var red := _plain(Color(0.8, 0.05, 0.05), 0.5)
-	var white := _plain(Color(0.9, 0.9, 0.9), 0.5)
-	var n := 72
-	for side in [-1, 1]:
-		var rr: float = R + side * (ROAD_W / 2.0 + 1.0)
-		var seg: float = TAU * rr / n
-		for i in n:
-			var a: float = TAU * (i + 0.5) / n
-			var pos := Vector3(cos(a) * rr, 0.6, sin(a) * rr)
-			_add_box(wall, pos, Vector3(1.0, 1.2, seg + 0.4), red if i % 2 == 0 else white, -a)
 
-	# город
-	var city := StaticBody3D.new()
-	world.add_child(city)
-	var tex := _window_tex()
-	var bmats: Array = []
-	for t in [Color(1, 1, 1), Color(0.8, 0.85, 1.0), Color(1.0, 0.9, 0.8)]:
-		var m := StandardMaterial3D.new()
-		m.albedo_texture = tex
-		m.albedo_color = t
-		m.emission_enabled = true
-		m.emission_texture = tex
-		m.emission_energy_multiplier = 1.4
-		m.uv1_triplanar = true
-		m.uv1_world_triplanar = true
-		m.uv1_scale = Vector3.ONE * 0.036
-		m.roughness = 0.5
-		m.metallic = 0.3
-		bmats.append(m)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 7
-	for i in 110:
-		var ang := rng.randf() * TAU
-		var inside := rng.randf() < 0.3
-		var rad: float = rng.randf_range(15.0, R - 40.0) if inside else rng.randf_range(R + 32.0, R + 300.0)
-		var bw := rng.randf_range(14.0, 34.0)
-		var bd := rng.randf_range(14.0, 34.0)
-		var bh := rng.randf_range(18.0, 85.0)
-		_add_box(city, Vector3(cos(ang) * rad, bh * 0.5, sin(ang) * rad), Vector3(bw, bh, bd), bmats[rng.randi() % 3], rng.randf() * PI)
+func _count_found() -> int:
+	var n := 0
+	for r in races:
+		if r["found"]:
+			n += 1
+	return n
 
-	# фонари
-	var pole := _plain(Color(0.1, 0.1, 0.1))
-	var lamp := _emit(Color(1.0, 0.8, 0.5), 3.0)
-	for i in 24:
-		var a2 := TAU * i / 24.0
-		var r2 := R + ROAD_W / 2.0 + 3.0
-		var base := Vector3(cos(a2) * r2, 0, sin(a2) * r2)
-		_add_box(world, base + Vector3(0, 4, 0), Vector3(0.3, 8, 0.3), pole, 0.0, false)
-		_add_box(world, base + Vector3(0, 8.2, 0), Vector3(1.4, 0.3, 1.4), lamp, 0.0, false)
 
-	# финишная арка и шахматная линия
-	var black := _plain(Color(0.02, 0.02, 0.02))
-	for j in 12:
-		for row in 2:
-			var mat: Material = line_m if (j + row) % 2 == 0 else black
-			_add_box(world, Vector3(R - ROAD_W / 2.0 + (j + 0.5) * ROAD_W / 12.0, 0.06, (row - 0.5) * 1.5), Vector3(ROAD_W / 12.0, 0.04, 1.5), mat, 0.0, false)
-	for sx in [-1, 1]:
-		_add_box(world, Vector3(R + sx * (ROAD_W / 2.0 + 2.0), 4.5, 0), Vector3(1, 9, 1), pole, 0.0, false)
-	_add_box(world, Vector3(R, 9.2, 0), Vector3(ROAD_W + 5.0, 1.5, 1.0), _emit(Color(1.0, 0.2, 0.6), 2.5), 0.0, false)
+func _check_races() -> void:
+	for i in range(races.size()):
+		var r: Dictionary = races[i]
+		var p: Vector3 = r["pos"]
+		var d: float = Vector2(car.position.x - p.x, car.position.z - p.z).length()
+		if not r["found"] and d < 110.0:
+			r["found"] = true
+			hud.show_msg("Найдена гонка! (%d / %d)\nЗаедь в кольцо, чтобы начать" % [_count_found(), races.size()], 4.0)
+			_save_game()
+		if d > 30.0:
+			r["armed"] = true
+		if state == RS.IDLE and r["armed"] and d < 7.5:
+			_start_race(i)
+			return
 
-# ---------------------------------------------------------------- гонка
-func _start_race() -> void:
-	if menu:
-		menu.queue_free()
-		menu = null
-	_clear_world()
-	_build_track()
-	_spawn_cars()
-	_build_hud()
-	state = "countdown"
-	countdown = 4.0
+
+func _start_race(i: int) -> void:
+	cur_race = i
+	var r: Dictionary = races[i]
+	route = r["route"]
+	state = RS.COUNTDOWN
+	countdown = 3.99
+	next_cp = 1
 	race_time = 0.0
-	snap_cam = true
+	var dir: Vector3 = (route[1] - route[0]).normalized()
+	var right: Vector3 = dir.cross(Vector3.UP)
+	var yaw: float = atan2(-dir.x, -dir.z)
+	car.place(route[0] + right * 3.0, yaw)
+	car.locked = true
+	cam_yaw = yaw
+	_make_rival(route[0] - right * 3.0, yaw)
+	beacon.position = route[1]
+	beacon.visible = true
+	hud.show_msg("Гонка! Проезжай чекпоинты по порядку", 3.0)
 
-func _spawn_cars() -> void:
-	var slots := [[-0.035, -5.0], [-0.035, 5.0], [-0.075, -5.0], [-0.075, 5.0]]
-	var tints := [Color(0.9, 0.4, 0.0), Color(0.6, 0.1, 0.8), Color(0.1, 0.7, 0.3)]
-	var plv := Game.levels(Game.selected)
-	var ptop: float = float(Game.cars[Game.selected]["top"]) * (1.0 + 0.03 * plv["engine"])
-	var ai_i := 0
-	for s in 4:
-		var is_player := (s == 2)
-		var c = CarScript.new()
-		if is_player:
-			c.setup(Game.selected, plv)
-		else:
-			var idx := randi() % Game.cars.size()
-			c.setup(idx, {"engine": 0, "tires": 0, "nitro": 0}, true, tints[ai_i])
-			c.limit_mult = ptop * randf_range(0.85, 1.02) / c.top
-			c.lane = slots[s][1]
-			ai_i += 1
-		world.add_child(c)
-		var a: float = slots[s][0]
-		var r: float = R + float(slots[s][1])
-		var p := Vector3(cos(a) * r, 0.7, sin(a) * r)
-		c.look_at_from_position(p, p + Vector3(-sin(a), 0, cos(a)))
-		c.locked = true
-		cars_all.append(c)
-		progress[c] = {"last": a, "total": a}
-		if is_player:
-			player = c
 
-func _make_btn(id: String, text: String, rect: Rect2) -> void:
-	var p := Panel.new()
-	p.position = rect.position
-	p.size = rect.size
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(1, 1, 1, 0.18)
-	sb.set_corner_radius_all(24)
-	sb.set_border_width_all(3)
-	sb.border_color = Color(1, 1, 1, 0.5)
-	p.add_theme_stylebox_override("panel", sb)
-	var l := _lbl(text, 28)
-	l.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_child(l)
-	hud.add_child(p)
-	btn_rects[id] = rect
-	btn_nodes[id] = p
+func _make_rival(pos: Vector3, yaw: float) -> void:
+	if rival != null:
+		rival.queue_free()
+	rival = Node3D.new()
+	var v = CarVisual.new()
+	rival.add_child(v)
+	v.setup(Color(0.75, 0.05, 0.07), Color(0.08, 0.08, 0.09))
+	rival.position = pos
+	rival.rotation.y = yaw
+	add_child(rival)
+	rival_v = v
+	rival_idx = 1
+	rival_speed = fx_rng.randf_range(34.0, 42.0)
+	rival_cur = 0.0
 
-func _build_hud() -> void:
-	hud = Control.new()
-	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ui.add_child(hud)
-	var vs := get_viewport().get_visible_rect().size
-	info_label = _lbl("", 30)
-	info_label.position = Vector2(24, 16)
-	hud.add_child(info_label)
-	speed_label = _lbl("0", 52)
-	speed_label.position = Vector2(vs.x * 0.5 - 110, vs.y - 90)
-	hud.add_child(speed_label)
-	drift_label = _lbl("", 44, Color(1, 0.8, 0.2))
-	drift_label.size = Vector2(vs.x, 60)
-	drift_label.position = Vector2(0, 70)
-	drift_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hud.add_child(drift_label)
-	big_label = _lbl("", 110, Color(1, 1, 0.4))
-	big_label.size = Vector2(vs.x, 150)
-	big_label.position = Vector2(0, 170)
-	big_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hud.add_child(big_label)
-	nitro_bar = ProgressBar.new()
-	nitro_bar.position = Vector2(vs.x * 0.5 - 200, 20)
-	nitro_bar.size = Vector2(400, 22)
-	nitro_bar.show_percentage = false
-	hud.add_child(nitro_bar)
-	btn_rects.clear()
-	btn_nodes.clear()
-	var bh := vs.y
-	_make_btn("left", "<", Rect2(30, bh - 190, 150, 160))
-	_make_btn("right", ">", Rect2(200, bh - 190, 150, 160))
-	_make_btn("gas", "ГАЗ", Rect2(vs.x - 200, bh - 230, 170, 200))
-	_make_btn("brake", "СТОП", Rect2(vs.x - 390, bh - 120, 170, 90))
-	_make_btn("drift", "ДРИФТ", Rect2(vs.x - 390, bh - 225, 170, 90))
-	_make_btn("nitro", "НИТРО", Rect2(vs.x - 200, bh - 345, 170, 100))
 
-func _input(event: InputEvent) -> void:
-	if hud == null or (state != "race" and state != "countdown"):
+func _update_rival(delta: float) -> void:
+	if rival == null:
 		return
-	if event is InputEventScreenTouch:
-		if event.pressed:
-			touches[event.index] = event.position
+	var tgt: Vector3 = route[rival_idx]
+	var prev: Vector3 = route[rival_idx - 1]
+	var leg: Vector3 = (tgt - prev).normalized()
+	var aim: Vector3 = tgt - leg.cross(Vector3.UP) * 3.0
+	var to: Vector3 = aim - rival.position
+	to.y = 0.0
+	if to.length() < 6.0:
+		rival_idx += 1
+		if rival_idx >= route.size():
+			_race_end(false, "Соперник приехал первым!")
+		return
+	var want: float = atan2(-to.x, -to.z)
+	var diff: float = absf(angle_difference(rival.rotation.y, want))
+	rival.rotation.y = lerp_angle(rival.rotation.y, want, 1.0 - exp(-4.0 * delta))
+	var f: float = clampf(1.0 - diff / PI * 0.9, 0.4, 1.0)
+	rival_cur = move_toward(rival_cur, rival_speed * f, 20.0 * delta)
+	var fwd: Vector3 = -rival.global_transform.basis.z
+	rival.position += fwd * rival_cur * delta
+	rival_v.update_wheels(rival_cur, 0.0, delta)
+
+
+func _update_race(delta: float) -> void:
+	if state == RS.COUNTDOWN:
+		countdown -= delta
+		if countdown <= 0.0:
+			state = RS.RUNNING
+			car.locked = false
+			hud.show_big("СТАРТ!", 1.0)
 		else:
-			touches.erase(event.index)
-	elif event is InputEventScreenDrag:
-		touches[event.index] = event.position
+			hud.show_big(str(ceili(countdown)))
+	elif state == RS.RUNNING:
+		race_time += delta
+		_update_rival(delta)
+		if state != RS.RUNNING:
+			return
+		var cp: Vector3 = route[next_cp]
+		var d: float = Vector2(car.position.x - cp.x, car.position.z - cp.z).length()
+		if d < 12.0:
+			next_cp += 1
+			if next_cp >= route.size():
+				_race_end(true, "ПОБЕДА!")
+				return
+			beacon.position = route[next_cp]
+		hud.set_race_text("Чекпоинт %d / %d\nВремя %.1f" % [next_cp, route.size() - 1, race_time])
+		if race_time > 240.0:
+			_race_end(false, "Время вышло")
+
+
+func _race_end(win: bool, msg: String) -> void:
+	state = RS.IDLE
+	car.locked = false
+	beacon.visible = false
+	hud.set_race_text("")
+	hud.show_big("")
+	if rival != null:
+		rival.queue_free()
+		rival = null
+	var r: Dictionary = races[cur_race]
+	r["armed"] = false
+	if win:
+		var reward: int = 1000 + int(maxf(0.0, 60.0 - race_time)) * 20
+		money += reward
+		r["done"] = true
+		_set_beacon_color(r["node"], Color(0.2, 1.0, 0.4))
+		hud.show_msg("%s\nВремя: %.1f с   +$%d" % [msg, race_time, reward], 5.0)
 	else:
+		hud.show_msg(msg, 4.0)
+	_save_game()
+
+
+# ---------------------------------------------------------------- сохранение
+
+func _save_game() -> void:
+	var found: Array = []
+	var done: Array = []
+	for i in range(races.size()):
+		if races[i]["found"]:
+			found.append(i)
+		if races[i]["done"]:
+			done.append(i)
+	var data := {"money": money, "found": found, "done": done}
+	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(data))
+		f.close()
+
+
+func _load_game() -> void:
+	if not FileAccess.file_exists(SAVE_PATH):
 		return
-	held.clear()
-	for pos in touches.values():
-		for id in btn_rects:
-			if btn_rects[id].grow(20).has_point(pos):
-				held[id] = true
+	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if f == null:
+		return
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return
+	money = int(parsed.get("money", 0))
+	for i in parsed.get("found", []):
+		var idx: int = int(i)
+		if idx >= 0 and idx < races.size():
+			races[idx]["found"] = true
+	for i in parsed.get("done", []):
+		var idx2: int = int(i)
+		if idx2 >= 0 and idx2 < races.size():
+			races[idx2]["done"] = true
+			_set_beacon_color(races[idx2]["node"], Color(0.2, 1.0, 0.4))
 
-func _control_player() -> void:
-	var l := held.has("left") or Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A)
-	var r := held.has("right") or Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D)
-	player.steer_in = float(l) - float(r)
-	player.gas = 1.0 if (held.has("gas") or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W)) else 0.0
-	player.brake_in = 1.0 if (held.has("brake") or Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S)) else 0.0
-	player.handbrake = held.has("drift") or Input.is_key_pressed(KEY_SPACE)
-	player.nitro_on = held.has("nitro") or Input.is_key_pressed(KEY_SHIFT)
 
-func _control_ai(c) -> void:
-	var a := atan2(c.global_position.z, c.global_position.x)
-	var ta: float = a + 0.10 + clampf(c.speed / 60.0, 0.0, 1.0) * 0.08
-	var tr: float = R + c.lane
-	var target := Vector3(cos(ta) * tr, 0, sin(ta) * tr)
-	var loc: Vector3 = c.to_local(target)
-	var ang := atan2(-loc.x, -loc.z)
-	c.steer_in = clampf(ang * 2.0, -1.0, 1.0)
-	c.gas = 1.0 - absf(c.steer_in) * 0.5
-	c.brake_in = 0.0
-	c.handbrake = false
+# ---------------------------------------------------------------- цикл
 
 func _physics_process(delta: float) -> void:
-	if state == "countdown":
-		countdown -= delta
-		if countdown <= 1.0:
-			state = "race"
-			go_hide = 1.0
-			big_label.text = "СТАРТ!"
-			for c in cars_all:
-				c.locked = false
-		else:
-			big_label.text = str(int(ceil(countdown - 1.0)))
-		return
-	if state != "race" and state != "done":
-		return
-	if state == "race":
-		race_time += delta
-		go_hide -= delta
-		if go_hide <= 0.0:
-			big_label.text = ""
-		_control_player()
-	for c in cars_all:
-		if c != player:
-			_control_ai(c)
-	for c in cars_all:
-		var p: Dictionary = progress[c]
-		var a := atan2(c.global_position.z, c.global_position.x)
-		p["total"] += wrapf(a - p["last"], -PI, PI)
-		p["last"] = a
-		if not (c in finished) and p["total"] >= LAPS * TAU:
-			finished.append(c)
-			if c == player:
-				_finish_player()
-
-func _finish_player() -> void:
-	state = "done"
-	held.clear()
-	touches.clear()
-	player.gas = 0.0
-	player.steer_in = 0.0
-	player.brake_in = 0.6
-	player.handbrake = false
-	player.nitro_on = false
-	player.drift_bank += player.drift_score
-	player.drift_score = 0.0
-	var place: int = finished.find(player) + 1
-	var prizes := [4000, 2500, 1500, 800]
-	var prize: int = prizes[clampi(place - 1, 0, 3)]
-	var dmoney := int(player.drift_bank * 0.5)
-	Game.money += prize + dmoney
-	Game.save_game()
-	var vs := get_viewport().get_visible_rect().size
-	var panel := PanelContainer.new()
-	panel.position = Vector2(vs.x * 0.5 - 220, 110)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 10)
-	panel.add_child(v)
-	v.add_child(_lbl("ФИНИШ! Место: %d" % place, 46, Color(1, 0.85, 0.3)))
-	v.add_child(_lbl("Время: %s" % _fmt_time(race_time), 28))
-	v.add_child(_lbl("Приз: $%d" % prize, 28, Color(0.5, 1, 0.5)))
-	v.add_child(_lbl("Дрифт: +$%d" % dmoney, 28, Color(0.5, 1, 0.5)))
-	var b := _btn("В гараж", 30, Vector2(300, 70))
-	b.pressed.connect(show_menu)
-	v.add_child(b)
-	hud.add_child(panel)
-
-func _fmt_time(t: float) -> String:
-	return "%d:%05.2f" % [floori(t / 60.0), fmod(t, 60.0)]
-
-# ---------------------------------------------------------------- камера и HUD
-func _process(delta: float) -> void:
-	if state == "menu":
-		if preview:
-			preview.rotation.y += delta * 0.5
-		cam.global_position = GARAGE + Vector3(6.5, 2.2, 6.5)
-		cam.look_at(GARAGE + Vector3(0, 0.7, 0))
-		cam.fov = 60.0
-		return
-	if player == null:
-		return
+	var c = hud.controls
+	car.in_steer = c.steer
+	car.in_gas = c.gas
+	car.in_brake = c.brake
+	car.in_hand = c.hand
+	car.in_nitro = c.nitro
+	if car.position.y < -5.0:
+		car.place(_spawn_pos(), 0.0)
+	_check_races()
+	_update_race(delta)
 	_update_camera(delta)
-	_update_hud()
 
-func _update_camera(delta: float) -> void:
-	var fwd: Vector3 = -player.global_transform.basis.z
-	fwd.y = 0.0
-	fwd = fwd.normalized()
-	var vel: Vector3 = player.linear_velocity
-	vel.y = 0.0
-	var dir := fwd
-	if vel.length() > 8.0:
-		dir = fwd.lerp(vel.normalized(), 0.4).normalized()
-	var target: Vector3 = player.global_position - dir * (7.5 + clampf(player.speed * 0.03, 0.0, 2.0)) + Vector3(0, 3.2, 0)
-	if snap_cam:
-		cam.global_position = target
-		snap_cam = false
-	else:
-		cam.global_position = cam.global_position.lerp(target, clampf(delta * 6.0, 0.0, 1.0))
-	cam.look_at(player.global_position + Vector3(0, 1.0, 0) + dir * 5.0)
-	var tf := 68.0 + clampf(absf(player.speed), 0.0, 60.0) * 0.3
-	if player.nitro_on and player.nitro > 0.0:
-		tf += 10.0
-	cam.fov = lerpf(cam.fov, tf, clampf(delta * 3.0, 0.0, 1.0))
 
-func _update_hud() -> void:
-	var pt: float = progress[player]["total"]
-	var place := 1
-	for c in cars_all:
-		if c != player and progress[c]["total"] > pt:
-			place += 1
-	var lap := clampi(int(floor(pt / TAU)) + 1, 1, LAPS)
-	info_label.text = "Место %d/%d    Круг %d/%d    %s" % [place, cars_all.size(), lap, LAPS, _fmt_time(race_time)]
-	speed_label.text = "%d км/ч" % int(absf(player.speed) * 3.6)
-	drift_label.text = ("ДРИФТ  %d" % int(player.drift_score)) if player.drift_score > 5.0 else ""
-	nitro_bar.max_value = player.nitro_max
-	nitro_bar.value = player.nitro
-	for id in btn_nodes:
-		btn_nodes[id].modulate = Color(1, 1, 1, 1.0 if held.has(id) else 0.6)
+func _process(_delta: float) -> void:
+	var kmh: float = absf(car.speed_fwd) * 3.6
+	hud.set_stats(kmh, car.nitro, money, _count_found(), races.size())
+	var list: Array = []
+	for r in races:
+		if r["found"]:
+			var col := Color(0.2, 1.0, 0.4) if r["done"] else Color(1.0, 0.8, 0.1)
+			list.append([r["pos"], col, false])
+	if state != RS.IDLE:
+		list.append([route[next_cp], Color(0.2, 0.8, 1.0), true])
+	var mm = hud.minimap
+	mm.player_pos = car.position
+	mm.player_yaw = car.rotation.y
+	mm.markers = list
+	mm.queue_redraw()
